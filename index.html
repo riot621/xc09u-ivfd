@@ -281,9 +281,52 @@
   details { background: var(--bg); padding: 8px 12px; border-radius: 8px; margin: 8px 0; }
   details summary { cursor: pointer; font-weight: 500; font-size: 13px; }
   .small { font-size: 12px; color: var(--muted); }
+  /* Lock screen */
+  .lock-screen {
+    position: fixed; inset: 0;
+    background: linear-gradient(135deg, #0f766e 0%, #134e4a 100%);
+    z-index: 1000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .lock-screen.show { display: flex; }
+  .lock-content {
+    max-width: 380px; width: 100%;
+    background: var(--card);
+    padding: 32px 24px;
+    border-radius: 16px;
+    text-align: center;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+  }
+  .lock-content .lock-icon { font-size: 56px; margin-bottom: 8px; }
+  .lock-content h2 { font-size: 20px; margin: 0 0 8px; }
+  .lock-content p.lock-msg { font-size: 13px; color: var(--muted); margin: 0 0 18px; }
+  .lock-content input { margin-bottom: 10px; font-size: 16px; padding: 12px; text-align: center; }
+  .lock-content button { width: 100%; padding: 14px; font-size: 16px; margin-top: 4px; }
+  .lock-error { color: var(--danger); font-size: 13px; min-height: 18px; margin: 6px 0; }
+  .app-hidden { display: none !important; }
 </style>
 </head>
 <body>
+
+<!-- Lock screen (shown when password is set) -->
+<div class="lock-screen" id="lock-screen">
+  <div class="lock-content">
+    <div class="lock-icon">🔒</div>
+    <h2 id="lock-title">パスワードを入力</h2>
+    <p class="lock-msg" id="lock-message">アプリを開くにはパスワードを入力してください</p>
+    <form onsubmit="event.preventDefault(); unlockApp();">
+      <input type="password" id="lock-password" placeholder="パスワード" autocomplete="current-password" autofocus>
+      <input type="password" id="lock-password-confirm" placeholder="確認用 (再入力)" autocomplete="new-password" style="display:none">
+      <div class="lock-error" id="lock-error"></div>
+      <button type="submit" class="btn" id="lock-button">ロック解除</button>
+    </form>
+  </div>
+</div>
+
+<div id="app-root" class="app-hidden">
 
 <header>
   <h1 id="page-title">📊 ダッシュボード</h1>
@@ -390,11 +433,11 @@
     <h2>📈 株式 <button class="btn btn-sm btn-secondary" style="float:right" onclick="refreshAllStockPrices()">株価を更新</button></h2>
     <div id="stocks-list"></div>
     <button class="btn btn-sm" style="margin-top:10px" onclick="openModal('modal-stock')">＋ 株式を追加</button>
-    <p class="small" style="margin-top:8px">日本株は銘柄コード4桁(例: 7203)、米国株はティッカー(例: AAPL)を入力。株価は前日終値ベースで自動取得します。</p>
+    <p class="small" style="margin-top:8px">日本株は銘柄コード4桁(例: 7203)、米国株はティッカー(例: AAPL)を入力。<br>株価は<strong>「株価を更新」ボタンで一括取得</strong> (前日終値ベース)。月1回など好きなタイミングで押してください。</p>
   </div>
 
   <div class="card">
-    <h2>📊 投資信託 / ETF</h2>
+    <h2>📊 投資信託</h2>
     <div id="funds-list"></div>
     <div style="display:flex; gap:6px; margin-top:10px; flex-wrap:wrap">
       <button class="btn btn-sm" onclick="openModal('modal-fund')">＋ 手動で追加</button>
@@ -444,6 +487,17 @@
     <p class="small">現在の総資産を記録します。月に1回押すことで資産推移グラフが描画できます。</p>
     <button class="btn btn-sm" onclick="recordSnapshot()">📸 今すぐ記録</button>
     <div id="snapshots-list" style="margin-top:10px"></div>
+  </div>
+
+  <div class="card">
+    <h2>🔒 セキュリティ</h2>
+    <div id="security-status" style="margin-bottom:10px"></div>
+    <div style="display:flex; gap:6px; flex-wrap:wrap">
+      <button class="btn btn-sm" id="btn-set-pw" onclick="setPasswordFlow()">パスワードを設定</button>
+      <button class="btn btn-sm" id="btn-change-pw" onclick="changePasswordFlow()" style="display:none">パスワード変更</button>
+      <button class="btn btn-sm btn-danger" id="btn-remove-pw" onclick="removePasswordFlow()" style="display:none">パスワード解除</button>
+    </div>
+    <p class="small" style="margin-top:10px">パスワードを設定すると、データはAES-256で暗号化されてブラウザに保存され、起動時にパスワード入力が必要になります。<br><strong style="color:var(--danger)">⚠ パスワードを忘れるとデータ復旧不可</strong>のため、メモ等で忘れないようにしてください。</p>
   </div>
 
   <div class="card">
@@ -564,7 +618,7 @@
 <div class="modal" id="modal-fund">
   <div class="modal-body">
     <div class="modal-header">
-      <h3>投資信託 / ETF</h3>
+      <h3>投資信託</h3>
       <button class="btn-icon" onclick="closeModal('modal-fund')">✕</button>
     </div>
     <form onsubmit="saveFund(event)">
@@ -651,12 +705,15 @@
 
 <div class="toast" id="toast"></div>
 
+</div><!-- /app-root -->
+
 <script>
 /* =====================================================
  * データレイヤ (localStorage)
  * 後でFirebaseに差し替えるときはこのstore.*だけ書き換える
  * ===================================================== */
-const STORAGE_KEY = 'kakeibo-asset-app-v1';
+const PLAIN_KEY = 'kakeibo-asset-app-v1';
+const ENC_KEY = 'kakeibo-asset-app-v1-enc';
 const DEFAULT_DATA = {
   banks: [],
   stocks: [],
@@ -670,26 +727,109 @@ const DEFAULT_DATA = {
   snapshots: []
 };
 
+/* ---------- Crypto helpers (Web Crypto API: PBKDF2 + AES-GCM) ---------- */
+const b64encode = bytes => btoa(String.fromCharCode(...bytes));
+const b64decode = str => Uint8Array.from(atob(str), c => c.charCodeAt(0));
+
+async function deriveKey(password, salt) {
+  const enc = new TextEncoder();
+  const km = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 150000, hash: 'SHA-256' },
+    km,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+async function encryptObj(obj, password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveKey(password, salt);
+  const enc = new TextEncoder();
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(JSON.stringify(obj)));
+  return { v: 1, salt: b64encode(salt), iv: b64encode(iv), ct: b64encode(new Uint8Array(ct)) };
+}
+
+async function decryptObj(blob, password) {
+  const salt = b64decode(blob.salt);
+  const iv = b64decode(blob.iv);
+  const ct = b64decode(blob.ct);
+  const key = await deriveKey(password, salt);
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+
+/* ---------- Store: handles both plain and encrypted storage ---------- */
 const store = {
   data: null,
-  load() {
+  password: null,    // session-only, never persisted
+  encrypted: false,  // true if data is stored encrypted
+  _saveQueue: Promise.resolve(),  // serialize saves to avoid races
+
+  hasEncrypted() { return !!localStorage.getItem(ENC_KEY); },
+  hasPlain() { return !!localStorage.getItem(PLAIN_KEY); },
+
+  // Load plain data (no password). Returns true on success.
+  loadPlain() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(PLAIN_KEY);
       this.data = raw ? { ...DEFAULT_DATA, ...JSON.parse(raw) } : structuredClone(DEFAULT_DATA);
-      // ensure nested defaults
-      if (!this.data.categories) this.data.categories = structuredClone(DEFAULT_DATA.categories);
-      if (!this.data.categories.income) this.data.categories.income = DEFAULT_DATA.categories.income;
-      if (!this.data.categories.expense) this.data.categories.expense = DEFAULT_DATA.categories.expense;
+      this._fixDefaults();
+      this.encrypted = false;
+      this.password = null;
+      return true;
+    } catch (e) { console.error(e); return false; }
+  },
+
+  // Load encrypted data using given password. Returns true if password correct.
+  async loadEncrypted(password) {
+    try {
+      const raw = localStorage.getItem(ENC_KEY);
+      if (!raw) return false;
+      const blob = JSON.parse(raw);
+      const obj = await decryptObj(blob, password);
+      this.data = { ...DEFAULT_DATA, ...obj };
+      this._fixDefaults();
+      this.encrypted = true;
+      this.password = password;
+      return true;
     } catch (e) {
-      console.error(e);
-      this.data = structuredClone(DEFAULT_DATA);
+      // Decryption fails -> wrong password
+      return false;
     }
   },
+
+  _fixDefaults() {
+    if (!this.data.categories) this.data.categories = structuredClone(DEFAULT_DATA.categories);
+    if (!this.data.categories.income) this.data.categories.income = DEFAULT_DATA.categories.income;
+    if (!this.data.categories.expense) this.data.categories.expense = DEFAULT_DATA.categories.expense;
+  },
+
+  // Public save() — serializes calls so no two encrypt operations race
   save() {
+    this._saveQueue = this._saveQueue
+      .then(() => this._actualSave())
+      .catch(e => console.error('Save error', e));
+    return this._saveQueue;
+  },
+
+  async _actualSave() {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.data));
+      // Snapshot data BEFORE the await so concurrent mutations don't matter
+      const snapshot = JSON.parse(JSON.stringify(this.data));
+      if (this.encrypted && this.password) {
+        const blob = await encryptObj(snapshot, this.password);
+        localStorage.setItem(ENC_KEY, JSON.stringify(blob));
+        localStorage.removeItem(PLAIN_KEY);
+      } else {
+        localStorage.setItem(PLAIN_KEY, JSON.stringify(snapshot));
+        localStorage.removeItem(ENC_KEY);
+      }
     } catch (e) {
-      alert('保存失敗: ' + e.message + '\n(ストレージ容量超過の可能性。写真は圧縮されますが多すぎる場合は削除してください)');
+      console.error('Save error', e);
+      alert('保存失敗: ' + e.message + '\n(ストレージ容量超過の可能性。写真が多すぎる場合は削除してください)');
     }
   }
 };
@@ -737,6 +877,8 @@ function openModal(id, prefill) {
   const form = m.querySelector('form');
   if (form) {
     form.reset();
+    // form.reset() は <input type="hidden"> をリセットしないブラウザがあるので明示クリア
+    form.querySelectorAll('input[type="hidden"]').forEach(el => el.value = '');
     // hide any preview
     const prev = m.querySelector('.photo-preview');
     if (prev) prev.style.display = 'none';
@@ -1092,10 +1234,12 @@ function renderBanks() {
 function saveStock(e) {
   e.preventDefault();
   const fd = new FormData(e.target);
-  const id = fd.get('id') || uid();
+  const rawId = (fd.get('id') || '').toString().trim();
+  const id = rawId || uid();
   const ticker = fd.get('ticker').trim().toUpperCase();
   const manualPrice = Number(fd.get('manualPrice')) || null;
-  const existing = store.data.stocks.find(x => x.id === id);
+  // Only treat as "edit" if id was explicitly set AND matches an existing stock
+  const existing = rawId ? store.data.stocks.find(x => x.id === rawId) : null;
   const s = {
     id,
     ticker,
@@ -1103,16 +1247,20 @@ function saveStock(e) {
     shares: Number(fd.get('shares')),
     avgCost: Number(fd.get('avgCost')) || null,
     currentPrice: manualPrice ?? existing?.currentPrice ?? null,
-    currency: existing?.currency || (/^\d+$/.test(ticker) ? 'JPY' : null),
+    currency: existing?.currency || (/^\d+$/.test(ticker) ? 'JPY' : 'USD'),
     lastFetched: existing?.lastFetched || null
   };
-  const idx = store.data.stocks.findIndex(x => x.id === id);
-  if (idx >= 0) store.data.stocks[idx] = s;
-  else store.data.stocks.push(s);
+  if (existing) {
+    const idx = store.data.stocks.findIndex(x => x.id === existing.id);
+    store.data.stocks[idx] = s;
+  } else {
+    store.data.stocks.push(s);
+  }
   store.save();
   closeModal('modal-stock');
-  toast('保存しました。株価取得中...');
-  fetchStockPrice(s).then(() => { store.save(); renderAll(); });
+  toast('保存しました');
+  renderAll();
+  // 株価は登録時には取得せず、「株価を更新」ボタンで一括取得する方針
 }
 function editStock(id) {
   const s = store.data.stocks.find(x => x.id === id);
@@ -1160,8 +1308,8 @@ async function fetchStockPrice(s) {
 }
 
 async function refreshAllStockPrices() {
-  if (!store.data.stocks.length) return;
-  toast('株価更新中...');
+  if (!store.data.stocks.length) { toast('株式が未登録です'); return; }
+  toast('株価更新中... (' + store.data.stocks.length + '銘柄)');
   const usdJpy = await fetchUsdJpy();
   let ok = 0, fail = 0;
   for (const s of store.data.stocks) {
@@ -1169,9 +1317,18 @@ async function refreshAllStockPrices() {
     if (r) ok++; else fail++;
   }
   if (usdJpy) store.data._usdJpy = usdJpy;
+  store.data._lastPriceRefresh = new Date().toISOString();
   store.save();
-  toast(`株価更新: 成功 ${ok}件 / 失敗 ${fail}件`);
+  toast(`株価更新完了: 成功 ${ok}件${fail ? ' / 失敗 ' + fail + '件' : ''}`);
   renderAll();
+}
+
+function formatLastRefresh() {
+  const iso = store.data._lastPriceRefresh;
+  if (!iso) return null;
+  const d = new Date(iso);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 async function fetchUsdJpy() {
@@ -1200,8 +1357,10 @@ function stockValueJPY(s) {
 
 function renderStocks() {
   const div = document.getElementById('stocks-list');
+  const lastRefresh = formatLastRefresh();
+  const refreshLine = `<div class="small" style="margin-bottom:8px; color:#666">前回株価更新: ${lastRefresh ? escapeHtml(lastRefresh) : '<span style="color:#b45309">未取得 — 「株価を更新」ボタンを押してください</span>'}</div>`;
   if (!store.data.stocks.length) {
-    div.innerHTML = '<div class="empty">未登録</div>';
+    div.innerHTML = refreshLine + '<div class="empty">未登録</div>';
     return;
   }
   const rows = store.data.stocks.map(s => {
@@ -1224,7 +1383,7 @@ function renderStocks() {
       </div>
     </div>`;
   }).join('');
-  div.innerHTML = rows;
+  div.innerHTML = refreshLine + rows;
 }
 
 /* =====================================================
@@ -1549,19 +1708,156 @@ function renderAll() {
   renderCategories();
   renderSnapshots();
   renderCharts();
+  renderSecurityStatus();
+}
+
+/* =====================================================
+ * Lock screen / Password management
+ * ===================================================== */
+function showLockScreen(mode = 'unlock') {
+  const ls = document.getElementById('lock-screen');
+  const title = document.getElementById('lock-title');
+  const msg = document.getElementById('lock-message');
+  const confirmInput = document.getElementById('lock-password-confirm');
+  const button = document.getElementById('lock-button');
+  document.getElementById('lock-error').textContent = '';
+  document.getElementById('lock-password').value = '';
+  confirmInput.value = '';
+  if (mode === 'setup') {
+    title.textContent = 'パスワードを設定';
+    msg.innerHTML = 'はじめに、データを暗号化するためのパスワードを設定してください。<br><strong style="color:var(--danger)">忘れると復旧不可</strong>です。';
+    confirmInput.style.display = 'block';
+    button.textContent = 'パスワードを設定';
+    ls.dataset.mode = 'setup';
+  } else {
+    title.textContent = 'パスワードを入力';
+    msg.textContent = 'アプリを開くにはパスワードを入力してください';
+    confirmInput.style.display = 'none';
+    button.textContent = 'ロック解除';
+    ls.dataset.mode = 'unlock';
+  }
+  document.getElementById('app-root').classList.add('app-hidden');
+  ls.classList.add('show');
+  setTimeout(() => document.getElementById('lock-password').focus(), 100);
+}
+
+function hideLockScreen() {
+  document.getElementById('lock-screen').classList.remove('show');
+  document.getElementById('app-root').classList.remove('app-hidden');
+}
+
+async function unlockApp() {
+  const errEl = document.getElementById('lock-error');
+  const pwEl = document.getElementById('lock-password');
+  const pw = pwEl.value;
+  const mode = document.getElementById('lock-screen').dataset.mode || 'unlock';
+
+  if (mode === 'setup') {
+    const pw2 = document.getElementById('lock-password-confirm').value;
+    if (pw.length < 4) { errEl.textContent = 'パスワードは4文字以上にしてください'; return; }
+    if (pw !== pw2) { errEl.textContent = 'パスワードが一致しません'; return; }
+    // Setup mode: encrypt existing plain data (or fresh defaults) with new password
+    if (!store.data) store.loadPlain();
+    store.password = pw;
+    store.encrypted = true;
+    await store.save();
+    hideLockScreen();
+    initAppPostUnlock();
+    return;
+  }
+
+  // Unlock mode
+  errEl.textContent = '解除中...';
+  const ok = await store.loadEncrypted(pw);
+  if (!ok) {
+    errEl.textContent = 'パスワードが違います';
+    pwEl.select();
+    return;
+  }
+  hideLockScreen();
+  initAppPostUnlock();
+}
+
+function renderSecurityStatus() {
+  const div = document.getElementById('security-status');
+  if (!div) return;
+  const setBtn = document.getElementById('btn-set-pw');
+  const chgBtn = document.getElementById('btn-change-pw');
+  const rmBtn = document.getElementById('btn-remove-pw');
+  if (store.encrypted) {
+    div.innerHTML = '<span class="badge income">🔒 暗号化済み</span> アプリ起動時にパスワードが必要です';
+    setBtn.style.display = 'none';
+    chgBtn.style.display = 'inline-block';
+    rmBtn.style.display = 'inline-block';
+  } else {
+    div.innerHTML = '<span class="badge expense">🔓 未暗号化</span> 誰でもアプリを開けます';
+    setBtn.style.display = 'inline-block';
+    chgBtn.style.display = 'none';
+    rmBtn.style.display = 'none';
+  }
+}
+
+async function setPasswordFlow() {
+  const pw = prompt('パスワードを設定してください (4文字以上):');
+  if (pw == null) return;
+  if (pw.length < 4) { alert('パスワードが短すぎます'); return; }
+  const pw2 = prompt('確認のためもう一度入力:');
+  if (pw !== pw2) { alert('パスワードが一致しません'); return; }
+  store.password = pw;
+  store.encrypted = true;
+  await store.save();
+  toast('パスワード設定完了 🔒');
+  renderSecurityStatus();
+}
+
+async function changePasswordFlow() {
+  const cur = prompt('現在のパスワードを入力:');
+  if (cur == null) return;
+  if (cur !== store.password) { alert('現在のパスワードが違います'); return; }
+  const pw = prompt('新しいパスワード (4文字以上):');
+  if (pw == null) return;
+  if (pw.length < 4) { alert('パスワードが短すぎます'); return; }
+  const pw2 = prompt('確認のためもう一度入力:');
+  if (pw !== pw2) { alert('パスワードが一致しません'); return; }
+  store.password = pw;
+  await store.save();
+  toast('パスワード変更しました');
+}
+
+async function removePasswordFlow() {
+  const cur = prompt('パスワード解除には現在のパスワードが必要です:');
+  if (cur == null) return;
+  if (cur !== store.password) { alert('パスワードが違います'); return; }
+  if (!confirm('パスワード保護を解除しますか?\n(データは平文でブラウザに保存されます)')) return;
+  store.password = null;
+  store.encrypted = false;
+  await store.save();
+  toast('パスワード保護を解除しました 🔓');
+  renderSecurityStatus();
 }
 
 /* =====================================================
  * Init
  * ===================================================== */
-store.load();
-document.getElementById('month-picker').value = currentMonth;
-document.getElementById('month-picker').addEventListener('change', e => {
-  currentMonth = e.target.value;
+function initAppPostUnlock() {
+  document.getElementById('month-picker').value = currentMonth;
+  document.getElementById('month-picker').addEventListener('change', e => {
+    currentMonth = e.target.value;
+    renderAll();
+  });
   renderAll();
-});
-window.addEventListener('DOMContentLoaded', renderAll);
-renderAll();
+}
+
+(function init() {
+  if (store.hasEncrypted()) {
+    // Encrypted data exists -> require password
+    showLockScreen('unlock');
+  } else {
+    // No encryption -> load plain and start
+    store.loadPlain();
+    initAppPostUnlock();
+  }
+})();
 
 // Service worker (optional)
 if ('serviceWorker' in navigator) {

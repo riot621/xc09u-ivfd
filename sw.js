@@ -1,5 +1,5 @@
 // 最小Service Worker — オフライン時に index.html をキャッシュから返す
-const CACHE = 'kakeibo-v1';
+const CACHE = 'kakeibo-v2';
 const ASSETS = ['./', './index.html', './manifest.json'];
 
 self.addEventListener('install', e => {
