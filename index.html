@@ -310,6 +310,41 @@
   .compact-header .val { min-width: 78px; text-align: right; }
   .compact-header .pl { min-width: 70px; text-align: right; }
   .compact-header .actions { width: 60px; }
+  /* Sticky header inside scroll container */
+  .scroll-list {
+    max-height: min(50vh, 480px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 0 -4px;
+    padding: 0 4px;
+    border-top: 1px solid var(--border);
+    position: relative;
+  }
+  .scroll-list .compact-header {
+    position: sticky;
+    top: 0;
+    background: var(--card);
+    z-index: 2;
+  }
+  .scroll-list::-webkit-scrollbar { width: 6px; }
+  .scroll-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .scroll-list::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+  .scroll-hint {
+    font-size: 10px;
+    color: var(--muted);
+    text-align: right;
+    padding: 4px 0 0;
+  }
+  .count-badge {
+    display: inline-block;
+    background: var(--bg);
+    color: var(--muted);
+    font-size: 11px;
+    padding: 1px 8px;
+    border-radius: 999px;
+    margin-left: 6px;
+    font-weight: 400;
+  }
   .toast {
     position: fixed;
     bottom: 90px;
@@ -1434,18 +1469,15 @@ function stockValueJPY(s) {
 function renderStocks() {
   const div = document.getElementById('stocks-list');
   const lastRefresh = formatLastRefresh();
-  const refreshLine = `<div class="small" style="margin-bottom:6px; color:#666">前回株価更新: ${lastRefresh ? escapeHtml(lastRefresh) : '<span style="color:#b45309">未取得 — 「株価を更新」ボタンを押してください</span>'}</div>`;
-  if (!store.data.stocks.length) {
+  const count = store.data.stocks.length;
+  const refreshLine = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-size:12px;color:#666">
+      <span>前回株価更新: ${lastRefresh ? escapeHtml(lastRefresh) : '<span style="color:#b45309">未取得</span>'}</span>
+      ${count ? `<span class="count-badge">${count}銘柄</span>` : ''}
+    </div>`;
+  if (!count) {
     div.innerHTML = refreshLine + '<div class="empty">未登録</div>';
     return;
   }
-  const header = `
-    <div class="compact-header">
-      <div class="main">銘柄 / 数量×単価</div>
-      <div class="val">評価額</div>
-      <div class="pl">損益</div>
-      <div class="actions"></div>
-    </div>`;
   const rows = store.data.stocks.map(s => {
     const val = stockValueJPY(s);
     const cost = (s.avgCost && s.shares) ? s.avgCost * s.shares * (s.currency === 'USD' && store.data._usdJpy ? store.data._usdJpy : 1) : null;
@@ -1466,7 +1498,16 @@ function renderStocks() {
       </div>
     </div>`;
   }).join('');
-  div.innerHTML = refreshLine + header + rows;
+  const scrollHint = count > 6 ? '<div class="scroll-hint">↕ スクロールして全銘柄を表示</div>' : '';
+  div.innerHTML = refreshLine + `<div class="scroll-list">
+    <div class="compact-header">
+      <div class="main">銘柄 / 数量×単価</div>
+      <div class="val">評価額</div>
+      <div class="pl">損益</div>
+      <div class="actions"></div>
+    </div>
+    ${rows}
+  </div>` + scrollHint;
 }
 
 /* =====================================================
@@ -1500,16 +1541,12 @@ function removeFund(id) {
 }
 function renderFunds() {
   const div = document.getElementById('funds-list');
-  if (!store.data.funds.length) {
+  const count = store.data.funds.length;
+  const countBadge = count ? `<div style="text-align:right;margin-bottom:6px"><span class="count-badge">${count}銘柄</span></div>` : '';
+  if (!count) {
     div.innerHTML = '<div class="empty">未登録</div>';
     return;
   }
-  const header = `
-    <div class="compact-header">
-      <div class="main">銘柄 / 口数 · 更新日</div>
-      <div class="val">評価額</div>
-      <div class="actions"></div>
-    </div>`;
   const rows = store.data.funds.map(f => {
     const sub = `${f.units ? f.units.toLocaleString() + '口' : ''}${f.units && f.lastUpdated ? ' · ' : ''}${f.lastUpdated ? '更新 ' + f.lastUpdated : ''}`;
     return `
@@ -1522,7 +1559,15 @@ function renderFunds() {
       </div>
     </div>`;
   }).join('');
-  div.innerHTML = header + rows;
+  const scrollHint = count > 6 ? '<div class="scroll-hint">↕ スクロールして全銘柄を表示</div>' : '';
+  div.innerHTML = countBadge + `<div class="scroll-list">
+    <div class="compact-header">
+      <div class="main">銘柄 / 口数 · 更新日</div>
+      <div class="val">評価額</div>
+      <div class="actions"></div>
+    </div>
+    ${rows}
+  </div>` + scrollHint;
 }
 
 function importFundsCsv(e) {
