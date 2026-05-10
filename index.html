@@ -758,6 +758,30 @@
 
 <script>
 /* =====================================================
+ * 互換シム + グローバルエラーハンドラ (真っ白画面防止)
+ * ===================================================== */
+if (typeof window.structuredClone === 'undefined') {
+  window.structuredClone = function (x) { return JSON.parse(JSON.stringify(x)); };
+}
+window.addEventListener('error', function (ev) {
+  try {
+    var msg = (ev.error && ev.error.stack) || ev.message || 'Unknown error';
+    var loc = ev.filename ? (' @ ' + ev.filename.split('/').pop() + ':' + ev.lineno) : '';
+    var box = document.getElementById('global-error') || (function () {
+      var d = document.createElement('div');
+      d.id = 'global-error';
+      d.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#fee2e2;color:#991b1b;padding:12px;font:13px/1.5 sans-serif;z-index:99999;border-bottom:2px solid #991b1b;white-space:pre-wrap;max-height:50vh;overflow:auto';
+      document.body && document.body.appendChild(d);
+      return d;
+    })();
+    if (box) box.textContent = '⚠ エラー: ' + msg + loc + '\n\n復旧: F12 → Application → Service Workers → Unregister → リロード';
+  } catch (e) {}
+});
+window.addEventListener('unhandledrejection', function (ev) {
+  console.error('Unhandled promise:', ev.reason);
+});
+
+/* =====================================================
  * データレイヤ (localStorage)
  * 後でFirebaseに差し替えるときはこのstore.*だけ書き換える
  * ===================================================== */
@@ -825,11 +849,14 @@ const store = {
     try {
       const raw = localStorage.getItem(PLAIN_KEY);
       this.data = raw ? { ...DEFAULT_DATA, ...JSON.parse(raw) } : structuredClone(DEFAULT_DATA);
-      this._fixDefaults();
-      this.encrypted = false;
-      this.password = null;
-      return true;
-    } catch (e) { console.error(e); return false; }
+    } catch (e) {
+      console.error('loadPlain failed, using defaults:', e);
+      this.data = JSON.parse(JSON.stringify(DEFAULT_DATA));  // 必ずdataをセット
+    }
+    try { this._fixDefaults(); } catch (e) { console.error(e); }
+    this.encrypted = false;
+    this.password = null;
+    return true;
   },
 
   // Load encrypted data using given password. Returns true if password correct.
@@ -1900,50 +1927,64 @@ async function removePasswordFlow() {
  * Init
  * ===================================================== */
 function initAppPostUnlock() {
-  document.getElementById('month-picker').value = currentMonth;
-  document.getElementById('month-picker').addEventListener('change', e => {
-    currentMonth = e.target.value;
-    renderAll();
-  });
+  // 必ずアプリを表示状態にする (パスワードなしルートでもロック解除ルートでも同じ)
+  const appRoot = document.getElementById('app-root');
+  if (appRoot) appRoot.classList.remove('app-hidden');
+  const ls = document.getElementById('lock-screen');
+  if (ls) ls.classList.remove('show');
+
+  const mp = document.getElementById('month-picker');
+  if (mp) {
+    mp.value = currentMonth;
+    mp.addEventListener('change', e => {
+      currentMonth = e.target.value;
+      renderAll();
+    });
+  }
   renderAll();
 }
 
 (function init() {
-  if (store.hasEncrypted()) {
-    // Encrypted data exists -> require password
-    showLockScreen('unlock');
-  } else {
-    // No encryption -> load plain and start
-    store.loadPlain();
-    initAppPostUnlock();
+  try {
+    if (store.hasEncrypted()) {
+      showLockScreen('unlock');
+    } else {
+      store.loadPlain();
+      initAppPostUnlock();
+    }
+  } catch (e) {
+    // 致命的エラー時もせめてエラーメッセージを表示
+    console.error('init failed:', e);
+    document.body.innerHTML = '<div style="padding:20px;font:14px sans-serif;color:#991b1b">'
+      + '<h2>⚠ 初期化エラー</h2>'
+      + '<pre style="background:#fee2e2;padding:10px;border-radius:6px;white-space:pre-wrap">' + (e.stack || e.message) + '</pre>'
+      + '<p>復旧手順: F12 → Application → Service Workers → Unregister → リロード</p>'
+      + '</div>';
   }
 })();
 
-// Service worker — 常に最新版をチェックして適用
+// Service worker — シンプルに登録して updateViaCache: 'none' で毎回新版チェック
+// (controllerchange リロードは無限ループの危険があるため使わない)
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
-    .then(reg => {
-      // 起動時に必ず更新チェック
-      reg.update().catch(() => {});
-      // 新しい SW が waiting 状態になったら即座に有効化
-      if (reg.waiting) reg.waiting.postMessage('SKIP_WAITING');
-      reg.addEventListener('updatefound', () => {
-        const nw = reg.installing;
-        if (!nw) return;
-        nw.addEventListener('statechange', () => {
-          if (nw.state === 'installed' && navigator.serviceWorker.controller) {
-            nw.postMessage('SKIP_WAITING');
-          }
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+      .then(reg => {
+        if (reg.waiting && navigator.serviceWorker.controller) {
+          reg.waiting.postMessage('SKIP_WAITING');
+        }
+        reg.addEventListener('updatefound', () => {
+          const nw = reg.installing;
+          if (!nw) return;
+          nw.addEventListener('statechange', () => {
+            if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+              // 新版あり: 次回リロード時に適用される (自動リロードはしない)
+              nw.postMessage('SKIP_WAITING');
+              console.log('新しいバージョンがあります。次回リロード時に適用されます。');
+            }
+          });
         });
-      });
-    })
-    .catch(() => {});
-  // SW がアクティブに切り替わったらリロード (1回だけ)
-  let _swReloaded = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (_swReloaded) return;
-    _swReloaded = true;
-    location.reload();
+      })
+      .catch(err => console.warn('SW register failed:', err));
   });
 }
 </script>
