@@ -261,6 +261,55 @@
     font-size: 13px;
   }
   .row-actions { display: flex; gap: 4px; }
+  /* Compact row (1-line per holding) for stocks/funds */
+  .compact-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .compact-row:last-child { border-bottom: 0; }
+  .compact-row .main {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .compact-row .main strong { margin-right: 4px; }
+  .compact-row .main .sub { color: var(--muted); font-size: 11px; }
+  .compact-row .val {
+    text-align: right;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    min-width: 78px;
+  }
+  .compact-row .pl {
+    font-size: 11px;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    min-width: 70px;
+    text-align: right;
+  }
+  .compact-row .actions { display: flex; gap: 0; flex-shrink: 0; }
+  .compact-row .actions .btn-icon { padding: 2px 6px; font-size: 14px; }
+  .compact-header {
+    display: flex;
+    gap: 8px;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .compact-header .main { flex: 1; }
+  .compact-header .val { min-width: 78px; text-align: right; }
+  .compact-header .pl { min-width: 70px; text-align: right; }
+  .compact-header .actions { width: 60px; }
   .toast {
     position: fixed;
     bottom: 90px;
@@ -1358,32 +1407,39 @@ function stockValueJPY(s) {
 function renderStocks() {
   const div = document.getElementById('stocks-list');
   const lastRefresh = formatLastRefresh();
-  const refreshLine = `<div class="small" style="margin-bottom:8px; color:#666">前回株価更新: ${lastRefresh ? escapeHtml(lastRefresh) : '<span style="color:#b45309">未取得 — 「株価を更新」ボタンを押してください</span>'}</div>`;
+  const refreshLine = `<div class="small" style="margin-bottom:6px; color:#666">前回株価更新: ${lastRefresh ? escapeHtml(lastRefresh) : '<span style="color:#b45309">未取得 — 「株価を更新」ボタンを押してください</span>'}</div>`;
   if (!store.data.stocks.length) {
     div.innerHTML = refreshLine + '<div class="empty">未登録</div>';
     return;
   }
+  const header = `
+    <div class="compact-header">
+      <div class="main">銘柄 / 数量×単価</div>
+      <div class="val">評価額</div>
+      <div class="pl">損益</div>
+      <div class="actions"></div>
+    </div>`;
   const rows = store.data.stocks.map(s => {
     const val = stockValueJPY(s);
     const cost = (s.avgCost && s.shares) ? s.avgCost * s.shares * (s.currency === 'USD' && store.data._usdJpy ? store.data._usdJpy : 1) : null;
     const pl = cost != null ? val - cost : null;
+    const priceStr = s.currentPrice
+      ? (s.currency === 'JPY' ? '¥' : '$') + s.currentPrice.toLocaleString()
+      : '価格未取得';
+    const sub = `${s.shares}株 × ${priceStr}`;
+    const name = s.name ? escapeHtml(s.name) : '';
     return `
-    <div class="list-item">
-      <div style="flex:1; min-width:0">
-        <strong>${escapeHtml(s.ticker)}</strong> <span class="small">${escapeHtml(s.name || '')}</span>
-        <div class="meta">${s.shares}株 × ${s.currentPrice ? (s.currency === 'JPY' ? '¥' : '$') + s.currentPrice.toLocaleString() : '価格未取得'} ${s.currency === 'USD' && store.data._usdJpy ? '(USD/JPY: ' + store.data._usdJpy.toFixed(2) + ')' : ''}</div>
-      </div>
-      <div style="text-align:right">
-        <div style="font-weight:600">${fmt(val)}</div>
-        ${pl != null ? `<div class="meta ${pl>=0?'pos':'neg'}">${fmtSigned(pl)}</div>` : ''}
-        <div class="row-actions" style="justify-content:flex-end">
-          <button class="btn-icon" onclick="editStock('${s.id}')">✎</button>
-          <button class="btn-icon" onclick="removeStock('${s.id}')">🗑</button>
-        </div>
+    <div class="compact-row">
+      <div class="main"><strong>${escapeHtml(s.ticker)}</strong>${name ? ' <span class="sub">' + name + '</span>' : ''} <span class="sub">· ${sub}</span></div>
+      <div class="val">${fmt(val)}</div>
+      <div class="pl ${pl != null ? (pl>=0?'pos':'neg') : ''}">${pl != null ? fmtSigned(pl) : '—'}</div>
+      <div class="actions">
+        <button class="btn-icon" onclick="editStock('${s.id}')">✎</button>
+        <button class="btn-icon" onclick="removeStock('${s.id}')">🗑</button>
       </div>
     </div>`;
   }).join('');
-  div.innerHTML = refreshLine + rows;
+  div.innerHTML = refreshLine + header + rows;
 }
 
 /* =====================================================
@@ -1421,21 +1477,25 @@ function renderFunds() {
     div.innerHTML = '<div class="empty">未登録</div>';
     return;
   }
-  div.innerHTML = store.data.funds.map(f => `
-    <div class="list-item">
-      <div>
-        <strong>${escapeHtml(f.name)}</strong>
-        <div class="meta">${f.units ? f.units.toLocaleString() + '口' : ''} · 最終更新 ${f.lastUpdated || '—'}</div>
+  const header = `
+    <div class="compact-header">
+      <div class="main">銘柄 / 口数 · 更新日</div>
+      <div class="val">評価額</div>
+      <div class="actions"></div>
+    </div>`;
+  const rows = store.data.funds.map(f => {
+    const sub = `${f.units ? f.units.toLocaleString() + '口' : ''}${f.units && f.lastUpdated ? ' · ' : ''}${f.lastUpdated ? '更新 ' + f.lastUpdated : ''}`;
+    return `
+    <div class="compact-row">
+      <div class="main"><strong>${escapeHtml(f.name)}</strong>${sub ? ' <span class="sub">· ' + escapeHtml(sub) + '</span>' : ''}</div>
+      <div class="val">${fmt(f.value)}</div>
+      <div class="actions">
+        <button class="btn-icon" onclick="editFund('${f.id}')">✎</button>
+        <button class="btn-icon" onclick="removeFund('${f.id}')">🗑</button>
       </div>
-      <div style="text-align:right">
-        <div style="font-weight:600">${fmt(f.value)}</div>
-        <div class="row-actions" style="justify-content:flex-end">
-          <button class="btn-icon" onclick="editFund('${f.id}')">✎</button>
-          <button class="btn-icon" onclick="removeFund('${f.id}')">🗑</button>
-        </div>
-      </div>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
+  div.innerHTML = header + rows;
 }
 
 function importFundsCsv(e) {
@@ -1859,9 +1919,32 @@ function initAppPostUnlock() {
   }
 })();
 
-// Service worker (optional)
+// Service worker — 常に最新版をチェックして適用
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch(()=>{});
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+    .then(reg => {
+      // 起動時に必ず更新チェック
+      reg.update().catch(() => {});
+      // 新しい SW が waiting 状態になったら即座に有効化
+      if (reg.waiting) reg.waiting.postMessage('SKIP_WAITING');
+      reg.addEventListener('updatefound', () => {
+        const nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener('statechange', () => {
+          if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+            nw.postMessage('SKIP_WAITING');
+          }
+        });
+      });
+    })
+    .catch(() => {});
+  // SW がアクティブに切り替わったらリロード (1回だけ)
+  let _swReloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (_swReloaded) return;
+    _swReloaded = true;
+    location.reload();
+  });
 }
 </script>
 </body>
